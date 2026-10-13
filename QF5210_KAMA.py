@@ -94,7 +94,7 @@ MIN_POSITIVE_WINDOWS = None  # None=严格过半；三个窗口默认至少两�
 MOMENTUM_ANNUALIZATION = 250
 TOP_N = 3
 EPO_PRICE_DAYS = 1300        # 1300 个收盘价格产生 1299 个日收益。
-EPO_SHRINKAGE = 0.20
+EPO_SHRINKAGE = 0.10
 DEFENSIVE_ETF = "BIL"        # 无合格候选时持有 BIL；上述开关决定 KAMA 开启时能否正常入选。
 MOMENTUM_STRATEGY_ORDER = [
     "Momentum_kama",          # EPO + KAMA
