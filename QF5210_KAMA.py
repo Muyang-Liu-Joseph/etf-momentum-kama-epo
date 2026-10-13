@@ -5,16 +5,17 @@
 
 先读运行后输出目录中的 REPORT_CN.md；详细输出由 EXPORT_DETAILS 控制。
 不同窗口和 KAMA 参数保存在不同结果目录。
-逐资产净贡献 = 实际持仓盈亏 - 分摊到该资产的实际交易费用。
-各期贡献以期初净资产为分母，合计等于该期累计收益，不是年化收益。
+逐资产绝对净贡献 = 实际持仓盈亏 - 分摊到该资产的实际交易费用，可与组合净值对账。
+主归因改用相对净贡献：实际持仓金额 ×（资产收益率 - 同期全资产等权收益率）- 交易费。
+各期贡献均以期初净资产为分母，不是年化收益；绝对贡献合计等于该期累计收益。
 零费用版本单独重跑，用于比较真正的费用情景差异。
 
 默认 MOMENTUM_WINDOWS=[34]，保留原回归动量；改成 [63,126,252] 即启用多周期。
 单窗口按原回归分数排序；多窗口分别排名再取平均名次，越小越优。
 多周期默认至少过半窗口的分数为正；合格候选最多持有 3 只，在每月首个交易日开盘调仓。
-Momentum_EQ 不使用 KAMA；Momentum_kama 使用 EPO 配权，可通过开关启用 KAMA 筛选。
-这两条策略目标 ETF 权重均为 100%，没有账户杠杆或目标波动率控制。
-Momentum_EPO_34D 使用同一资产池的 34 日信号和 EPO，但不使用 KAMA。
+四条策略形成 2×2 对照：等权/EPO 配权 × 不使用/使用 KAMA 筛选。
+Momentum_EQ、Momentum_EQ_KAMA、Momentum_EPO_NoKAMA、Momentum_kama
+的目标 ETF 权重均为 100%，没有账户杠杆或目标波动率控制。
 可选杠杆等权基准只买非 BIL 资产；BIL 不与负现金/融资同时持有。
 EPO 使用逆方差锚定、内生信号缩放及协方差收缩；不是约束优化器。
 默认买卖各 10bp；复权开盘是总收益近似；利率为常数情景假设。
@@ -46,11 +47,11 @@ BACKTEST_START = "2016-01-01"
 COST_BPS = 10.0              # Fee/slippage assumption per dollar bought OR sold.
 CASH_RATE = 0.02             # Constant scenario assumption, not historical USD rates.
 BORROW_SPREAD = 0.01
-MAX_LEVERAGE = 1.25          # 只用于可选的非 BIL 资产杠杆等权基准；两条动量策略上限固定为 1。
+MAX_LEVERAGE = 1.25          # 只用于可选的非 BIL 资产杠杆等权基准；四条动量策略上限固定为 1。
 RUN_LEVERAGED_EW = False     # 默认不运行杠杆基准；打开后 BIL 权重为零。
 REFRESH_DATA = False
 SHOW_PLOTS = True
-RUN_COST_COUNTERFACTUAL = True  # KAMA+EPO、动量等权和无 KAMA 的 34 日 EPO 分别重跑零费用情景。
+RUN_COST_COUNTERFACTUAL = True  # 四条动量策略分别重跑零费用情景。
 RUN_ATTRIBUTION = True
 EXPORT_DETAILS = True      # True 保存逐日账本、各窗口分数/排名和 EPO 输入；False 只留摘要。
 
@@ -73,12 +74,16 @@ ASSET_GROUPS = {
 STRATEGY_PLOT_STYLES = {
     "Momentum_kama": {"color": "#0072B2", "linewidth": 3.4,
                      "linestyle": "-", "alpha": 1.0, "zorder": 11},
+    "Momentum_EQ_KAMA": {"color": "#CC79A7", "linewidth": 2.8,
+                         "linestyle": "-.", "alpha": 1.0, "zorder": 10},
+    "Momentum_EPO_NoKAMA": {"color": "#9467BD", "linewidth": 2.6,
+                            "linestyle": ":", "alpha": 1.0, "zorder": 9},
     "Momentum_EQ": {"color": "#E69F00", "linewidth": 3.0,
-                    "linestyle": "--", "alpha": 1.0, "zorder": 10},
+                    "linestyle": "--", "alpha": 1.0, "zorder": 8},
 }
 
 MOMENTUM_WINDOWS = [34]     # 主版本
-USE_KAMA_FILTER = True
+USE_KAMA_FILTER = True      # KAMA 总开关：控制两条名称含 KAMA 的策略；False 时与无 KAMA 对照重合。
 # KAMA 参数统一在这里修改：(效率比周期, 快速平滑周期, 慢速平滑周期)
 # 自定义递推支持全部三个参数；首个有效值以上一日收盘价为初始值。
 KAMA_FAST = (20, 5, 30)
@@ -91,6 +96,12 @@ TOP_N = 3
 EPO_PRICE_DAYS = 1300        # 1300 个收盘价格产生 1299 个日收益。
 EPO_SHRINKAGE = 0.20
 DEFENSIVE_ETF = "BIL"        # 无合格候选时持有 BIL；上述开关决定 KAMA 开启时能否正常入选。
+MOMENTUM_STRATEGY_ORDER = [
+    "Momentum_kama",          # EPO + KAMA
+    "Momentum_EQ_KAMA",       # 等权 + KAMA
+    "Momentum_EPO_NoKAMA",    # EPO + 无 KAMA
+    "Momentum_EQ",            # 等权 + 无 KAMA
+]
 
 ROOT = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
 RAW_DIR = ROOT / "data" / f"raw_{DATA_START}_{DATA_END}"
@@ -99,7 +110,7 @@ KAMA_TAG = (f"_KAMA_F{'_'.join(map(str, KAMA_FAST))}"
             f"_S{'_'.join(map(str, KAMA_SLOW))}_D{KAMA_DIFF_DAYS}"
             f"_BIL{int(KAMA_FILTER_DEFENSIVE)}" if USE_KAMA_FILTER else "")
 OUT_DIR = ROOT / (("results_expanded" if USE_EXPANDED else "results_core")
-                  + f"_v4_no_long_bonds_mom_{WINDOW_TAG}" + KAMA_TAG)
+                  + f"_v5_four_way_relative_attr_mom_{WINDOW_TAG}" + KAMA_TAG)
 FIELDS = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
 
 
@@ -615,7 +626,6 @@ def highlight_strategy_lines(ax, ncol=1, fontsize=9):
         "EqualWeight": {"color": "#666666", "linestyle": ":", "linewidth": 1.6},
         "BIL": {"color": "#999999", "linestyle": "--", "linewidth": 1.2},
         "LeveragedEqualWeight": {"color": "#555555", "linestyle": "--", "linewidth": 1.4},
-        "Momentum_EPO_34D": {"color": "#9467BD", "linestyle": ":", "linewidth": 1.8},
     }
     for line in ax.get_lines():
         name = line.get_label()
@@ -626,7 +636,9 @@ def highlight_strategy_lines(ax, ncol=1, fontsize=9):
             if name in benchmark_styles:
                 line.set(**benchmark_styles[name], alpha=0.85, zorder=3)
     handles, labels = ax.get_legend_handles_labels()
-    priority = {"Momentum_kama": 0, "Momentum_EQ": 1, "SPY": 2, "QQQ": 3, "EqualWeight": 4}
+    priority = {"Momentum_kama": 0, "Momentum_EQ_KAMA": 1,
+                "Momentum_EPO_NoKAMA": 2, "Momentum_EQ": 3,
+                "SPY": 4, "QQQ": 5, "EqualWeight": 6}
     order = sorted(range(len(labels)), key=lambda i: priority.get(labels[i], 5))
     legend = ax.legend([handles[i] for i in order], [labels[i] for i in order],
                        ncol=ncol, fontsize=fontsize, handlelength=3.5)
@@ -681,35 +693,85 @@ def drawdown_episodes(ledger):
 
 
 def period_attribution(ledger, audit, selected_rows):
-    """真实持仓盈亏 / 该期初始净资产：精确加总为该期累计收益。
+    """同时计算绝对贡献和相对同期全资产等权组合的主动贡献。
 
-    pnl 已经包含前面净值变化带来的持仓金额变化，因此不能再次复利。
-    FeeContribution 为负；NetContribution = GrossContribution + FeeContribution。
-    贡献不是资产自身收益率，也不是 CAGR 的分解。
+    绝对净贡献可精确加总为该期累计收益，用于净值对账。
+    相对毛贡献逐持有区间计算为：
+        实际持仓金额 ×（该资产收益率 - 当日全资产简单等权收益率）
+    相对净贡献再扣除归属于该资产的实际交易费用。现金同样减去等权基准收益。
+    该主动 PnL 分解是日频金额差的加总，不等于两条独立净值曲线最终收益率之差。
     """
     part = ledger.loc[selected_rows]
     if part.empty:
         return None, None
     initial, final = float(part.equity_start.iloc[0]), float(part.NAV.iloc[-1])
-    gross = audit["asset_pnl"].loc[part.index].sum()
+    asset_returns = audit["asset_returns"].loc[part.index]
+    holding_values = audit["holding_values"].loc[part.index]
+    asset_pnl = audit["asset_pnl"].loc[part.index]
+    gross = asset_pnl.sum()
     fees = audit["asset_fees"].loc[part.index].sum()
-    components = pd.DataFrame({"GrossPnL": gross, "FeesPaid": fees})
-    components.loc["CASH_INTEREST"] = [part.cash_pnl.sum(), 0.0]
-    components["NetPnL"] = components.GrossPnL - components.FeesPaid
-    components["GrossContribution"] = components.GrossPnL / initial
+    equal_weight_return = asset_returns.mean(axis=1)
+    excess_returns = asset_returns.sub(equal_weight_return, axis=0)
+    relative_gross = holding_values.mul(excess_returns).sum()
+    held = holding_values.abs().gt(1e-12)
+    equal_weight_panel = asset_returns.mul(0).add(equal_weight_return, axis=0)
+
+    components = pd.DataFrame({
+        "AbsoluteGrossPnL": gross,
+        "FeesPaid": fees,
+        "RelativeGrossPnL": relative_gross,
+        "HeldIntervals": held.sum(),
+        "MeanAssetReturnWhenHeld": asset_returns.where(held).mean(),
+        "MeanEqualWeightReturnWhenHeld": equal_weight_panel.where(held).mean(),
+        "MeanExcessReturnWhenHeld": excess_returns.where(held).mean(),
+    })
+    post_trade_equity = part.equity_start - part.fee
+    cash_value = part.cash_weight * post_trade_equity
+    cash_held = cash_value.abs().gt(1e-12)
+    cash_return = part.cash_pnl.div(cash_value.where(cash_held))
+    cash_relative_gross = (part.cash_pnl - cash_value * equal_weight_return).sum()
+    components.loc["CASH_INTEREST"] = {
+        "AbsoluteGrossPnL": part.cash_pnl.sum(),
+        "FeesPaid": 0.0,
+        "RelativeGrossPnL": cash_relative_gross,
+        "HeldIntervals": int(cash_held.sum()),
+        "MeanAssetReturnWhenHeld": cash_return.where(cash_held).mean(),
+        "MeanEqualWeightReturnWhenHeld": equal_weight_return.where(cash_held).mean(),
+        "MeanExcessReturnWhenHeld": (
+            cash_return - equal_weight_return).where(cash_held).mean(),
+    }
+    components["AbsoluteNetPnL"] = (
+        components.AbsoluteGrossPnL - components.FeesPaid)
+    components["RelativeNetPnL"] = components.RelativeGrossPnL - components.FeesPaid
+    components["AbsoluteGrossContribution"] = components.AbsoluteGrossPnL / initial
     components["FeeContribution"] = -components.FeesPaid / initial
-    components["NetContribution"] = components.NetPnL / initial
-    reconstructed = float(components.NetPnL.sum())
-    error = reconstructed - (final-initial)
-    if not np.isclose(reconstructed, final-initial, atol=1e-10, rtol=1e-9):
-        raise AssertionError("Period attribution does not reconcile")
+    components["AbsoluteNetContribution"] = components.AbsoluteNetPnL / initial
+    components["RelativeGrossContribution"] = components.RelativeGrossPnL / initial
+    components["RelativeNetContribution"] = components.RelativeNetPnL / initial
+
+    absolute_reconstructed = float(components.AbsoluteNetPnL.sum())
+    absolute_error = absolute_reconstructed - (final-initial)
+    if not np.isclose(absolute_reconstructed, final-initial, atol=1e-10, rtol=1e-9):
+        raise AssertionError("Absolute period attribution does not reconcile")
+    relative_target = float((asset_pnl.sum(axis=1) + part.cash_pnl - part.fee
+                             - post_trade_equity * equal_weight_return).sum())
+    relative_reconstructed = float(components.RelativeNetPnL.sum())
+    relative_error = relative_reconstructed - relative_target
+    if not np.isclose(relative_reconstructed, relative_target, atol=1e-10, rtol=1e-9):
+        raise AssertionError("Relative period attribution does not reconcile")
+    benchmark_period_return = float((1 + equal_weight_return).prod() - 1)
     summary = {"start_open": part.start_open.iloc[0], "end_open": part.index[-1],
                "start_NAV": initial, "end_NAV": final,
                "period_return": final/initial-1,
-               "contribution_sum": components.NetContribution.sum(),
+               "absolute_contribution_sum": components.AbsoluteNetContribution.sum(),
+               "equal_weight_benchmark_return": benchmark_period_return,
+               "geometric_return_difference": final/initial-1-benchmark_period_return,
+               "relative_contribution_sum": components.RelativeNetContribution.sum(),
                "fees_NAV_units": part.fee.sum(),
                "fees_over_period_start_NAV": part.fee.sum()/initial,
-               "reconciliation_error_NAV_units": error}
+               "absolute_reconciliation_error_NAV_units": absolute_error,
+               "relative_reconciliation_error_NAV_units": relative_error,
+               "attribution_benchmark": "daily_equal_weight_return_of_all_TICKERS"}
     return components, summary
 
 
@@ -733,14 +795,18 @@ def export_attribution(name, ledger, audit, signal):
     weights = audit["weights"].copy()
     weights.index = ledger.index
     held = weights.gt(1e-10)
-    pnl, fees = audit["asset_pnl"], audit["asset_fees"]
     selected_counts = pd.Series(signal.selected_counts, dtype=float)
     holdings = pd.DataFrame({
         "MeanWeight": weights.mean(), "MaxWeight": weights.max(),
         "MeanWeightWhenHeld": weights.where(held).mean(),
         "HeldIntervals": held.sum(), "HeldFraction": held.mean(),
-        "SelectedRebalances": selected_counts.reindex(weights.columns).fillna(0).astype(int),
-        "GrossPnL": pnl.sum(), "FeesPaid": fees.sum(), "NetPnL": (pnl-fees).sum()})
+        "SelectedRebalances": selected_counts.reindex(weights.columns).fillna(0).astype(int)})
+    full_asset_attribution = tables["Full"].reindex(weights.columns)
+    holdings = holdings.join(full_asset_attribution[[
+        "AbsoluteGrossPnL", "FeesPaid", "AbsoluteNetPnL",
+        "RelativeGrossPnL", "RelativeNetPnL",
+        "MeanAssetReturnWhenHeld", "MeanEqualWeightReturnWhenHeld",
+        "MeanExcessReturnWhenHeld"]])
     holdings.index.name = "ETF"
     exposure = pd.DataFrame(index=ledger.index)
     exposure["MaxAssetWeight"] = weights.max(axis=1)
@@ -761,8 +827,8 @@ def export_attribution(name, ledger, audit, signal):
 
 
 def compare_attribution(reports):
-    """合并两条策略的归因，并比较相同日历区间的净贡献。"""
-    full_rows, period_rows, holding_rows = [], [], []
+    """合并四条策略的归因，并输出 2×2 因子差异。"""
+    full_rows, period_rows, holding_rows, summary_rows = [], [], [], []
     for name, report in reports.items():
         for period, table in report["tables"].items():
             rows = table.reset_index().assign(Strategy=name, Period=period)
@@ -770,40 +836,58 @@ def compare_attribution(reports):
             if period == "Full":
                 full_rows.append(rows.drop(columns="Period"))
         holding_rows.append(report["holdings"].reset_index().assign(Strategy=name))
+        summary_rows.append(report["summary"].assign(Strategy=name))
     full = pd.concat(full_rows, ignore_index=True).sort_values(
-        ["Strategy", "NetContribution"], ascending=[True, False])
+        ["Strategy", "RelativeNetContribution"], ascending=[True, False])
     full.to_csv(OUT_DIR / "asset_contribution_full.csv", index=False, encoding="utf-8-sig")
     pd.concat(period_rows, ignore_index=True).to_csv(
         OUT_DIR / "contribution_by_period.csv", index=False, encoding="utf-8-sig")
     pd.concat(holding_rows, ignore_index=True).to_csv(
         OUT_DIR / "holding_summary.csv", index=False, encoding="utf-8-sig")
-    epo, equal = reports["Momentum_kama"], reports["Momentum_EQ"]
+    pd.concat(summary_rows, ignore_index=True).to_csv(
+        OUT_DIR / "attribution_period_summary.csv", index=False, encoding="utf-8-sig")
+    strategy_order = [name for name in MOMENTUM_STRATEGY_ORDER if name in reports]
+    common_periods = set.intersection(
+        *(set(reports[name]["tables"]) for name in strategy_order))
     comparisons = []
-    for period, left in epo["tables"].items():
-        # 最大回撤段的日期不同，不能直接比较。
-        if period == "Worst_drawdown_peak_to_trough" or period not in equal["tables"]:
+    for period in sorted(common_periods):
+        # 每条策略自身最大回撤段的日期不同，不能横向比较。
+        if period == "Worst_drawdown_peak_to_trough":
             continue
-        right = equal["tables"][period]
-        frame = pd.DataFrame({"EPO_NetContribution": left.NetContribution,
-                              "EQ_NetContribution": right.NetContribution})
-        frame["NetDifference"] = frame.EPO_NetContribution - frame.EQ_NetContribution
+        frame = pd.DataFrame({
+            name: reports[name]["tables"][period].RelativeNetContribution
+            for name in strategy_order})
+        if set(MOMENTUM_STRATEGY_ORDER).issubset(frame.columns):
+            frame["EPO_Effect_NoKAMA"] = (
+                frame.Momentum_EPO_NoKAMA - frame.Momentum_EQ)
+            frame["EPO_Effect_WithKAMA"] = (
+                frame.Momentum_kama - frame.Momentum_EQ_KAMA)
+            frame["KAMA_Effect_EqualWeight"] = (
+                frame.Momentum_EQ_KAMA - frame.Momentum_EQ)
+            frame["KAMA_Effect_EPO"] = (
+                frame.Momentum_kama - frame.Momentum_EPO_NoKAMA)
         frame.index.name = "Component"
         comparisons.append(frame.reset_index().assign(Period=period))
     comparison = pd.concat(comparisons, ignore_index=True).sort_values(
-        ["Period", "NetDifference"], ascending=[True, False])
-    comparison.to_csv(OUT_DIR / "EPO_vs_EQ_contribution.csv", index=False, encoding="utf-8-sig")
-    # 两条策略同时改变 KAMA 筛选和配权方法，差额不能解释为 EPO 的单独贡献。
-    # 全期净贡献图同时使用颜色和纹理区分两条策略。
-    frame = pd.DataFrame({"Momentum_kama": epo["tables"]["Full"].NetContribution,
-                          "Momentum_EQ": equal["tables"]["Full"].NetContribution}) * 100
+        ["Period", "Momentum_kama"], ascending=[True, False])
+    comparison.to_csv(OUT_DIR / "four_way_relative_contribution.csv",
+                      index=False, encoding="utf-8-sig")
+
+    # 全期图的主口径为相对同期等权组合的净贡献，同时使用颜色和纹理区分策略。
+    frame = pd.DataFrame({
+        name: reports[name]["tables"]["Full"].RelativeNetContribution
+        for name in strategy_order}) * 100
     frame = frame.loc[frame.Momentum_kama.sort_values(ascending=False).index]
     fig, ax = plt.subplots(figsize=(13, 6))
-    frame.plot.bar(ax=ax, color=["#0072B2", "#E69F00"], width=.8)
-    for patch in ax.containers[1]:
-        patch.set_hatch("//")
+    colors = [STRATEGY_PLOT_STYLES[name]["color"] for name in strategy_order]
+    frame.plot.bar(ax=ax, color=colors, width=.82)
+    hatches = ["", "//", "..", "xx"]
+    for container, hatch in zip(ax.containers, hatches):
+        for patch in container:
+            patch.set_hatch(hatch)
     ax.axhline(0, color="#555555", linewidth=.8)
-    ax.set(title="Full-period net contribution", xlabel="",
-           ylabel="Contribution (percentage points of initial NAV)")
+    ax.set(title="Full-period contribution relative to daily equal-weight universe",
+           xlabel="", ylabel="Relative net contribution (percentage points of initial NAV)")
     ax.tick_params(axis="x", rotation=55)
     ax.grid(axis="y", alpha=.2)
     fig.tight_layout()
@@ -815,7 +899,7 @@ def compare_attribution(reports):
 def export_cost_analysis(results, zero_cost_results):
     """费用影响只留一张表；零费用收益来自真正重跑，保留利息假设。"""
     rows = []
-    for name in ["Momentum_kama", "Momentum_EQ", "Momentum_EPO_34D"]:
+    for name in MOMENTUM_STRATEGY_ORDER:
         ledger = results[name]
         years = (ledger.index[-1] - ledger.start_open.iloc[0]).days / 365.25
         row = {"Strategy": name, "NetCAGR": summarize(name, ledger)["CAGR"],
@@ -851,8 +935,8 @@ def write_report(performance, yearly, reports, costs, results):
     """一份中文摘要：绩效、阶段、归因、USO、集中度和费用。"""
     fmt_pct = lambda x: f"{x:.2%}" if pd.notna(x) else "—"
     fmt_pp = lambda x: f"{100*x:+.2f}" if pd.notna(x) else "—"
-    preferred = ["Momentum_kama", "Momentum_EQ", "Momentum_EPO_34D", "SPY", "QQQ", "EqualWeight",
-                 "LeveragedEqualWeight", "BIL"]
+    preferred = MOMENTUM_STRATEGY_ORDER + [
+        "SPY", "QQQ", "EqualWeight", "LeveragedEqualWeight", "BIL"]
     selected = [n for n in preferred if n in performance.index]
     perf = performance.loc[selected, ["CAGR", "Volatility", "Sharpe", "MaxDrawdown",
                                       "AnnualTurnover"]].copy()
@@ -869,7 +953,7 @@ def write_report(performance, yearly, reports, costs, results):
     lines = ["# QF5210 ETF 策略回测：动量、KAMA 与 EPO", "",
              f"实际覆盖：{ledger.start_open.iloc[0].date()} 开盘至 {ledger.index[-1].date()} 开盘。",
              f"资产池：{', '.join(TICKERS)}。单边交易成本：{COST_BPS:g} bp。",
-             f"Momentum_kama 的 KAMA 筛选：{USE_KAMA_FILTER}；快线{KAMA_FAST}，慢线{KAMA_SLOW}，快线{KAMA_DIFF_DAYS}日变化>0；BIL正常入选需通过筛选：{KAMA_FILTER_DEFENSIVE}。",
+             f"KAMA 总开关 USE_KAMA_FILTER={USE_KAMA_FILTER}；控制 Momentum_kama 与 Momentum_EQ_KAMA。快线{KAMA_FAST}，慢线{KAMA_SLOW}，快线{KAMA_DIFF_DAYS}日变化>0；BIL正常入选需通过筛选：{KAMA_FILTER_DEFENSIVE}。",
              f"动量窗口：{windows} 个收盘价格；最多持有 {TOP_N} 只；每月首个交易日开盘调仓，信号使用上一交易日收盘。",
              f"窗口内分数：expm1({MOMENTUM_ANNUALIZATION} × log-price 回归斜率) × R²。",
              f"单窗口按原分数排序；多窗口分别排名后取平均名次，越小越优。要求至少 {required}/{len(windows)} 个窗口分数为正，且所有窗口均有有效数据。",
@@ -879,69 +963,82 @@ def write_report(performance, yearly, reports, costs, results):
               + ("正常入选时 BIL 必须通过动量与 KAMA。" if USE_KAMA_FILTER and KAMA_FILTER_DEFENSIVE
                  else "KAMA 开启时 BIL 不正常入选，仅作回退。" if USE_KAMA_FILTER
                  else "KAMA 关闭时 BIL 与其他 ETF 一样按动量筛选。")),
-             "Momentum_EQ、Momentum_kama 和 Momentum_EPO_34D 的目标 ETF 权重均合计 100%，不使用账户杠杆、目标波动率或周度仓位控制。",
-             "Momentum_EQ 按动量入选后等权、不使用 KAMA；Momentum_kama 按动量与可选 KAMA 筛选后 EPO 配权；Momentum_EPO_34D 是固定 34 日动量、不使用 KAMA 的 EPO 对照。",
-             ("当前动量窗口为 [34]；KAMA 开启时 Momentum_kama 与 34 日 EPO 对照仍可能不同，差异包括 KAMA 筛选及其后续持仓。"
-              if windows == [34] else "当前为多窗口实验；Momentum_kama 与 34 日 EPO 对照还同时存在动量窗口和 KAMA 筛选差异。"),
+             "四条动量策略均使用同一组动量窗口、目标 ETF 权重合计 100%，不使用账户杠杆、目标波动率或周度仓位控制。",
+             "2×2 对照：Momentum_EQ=等权+无KAMA；Momentum_EQ_KAMA=等权+KAMA；Momentum_EPO_NoKAMA=EPO+无KAMA；Momentum_kama=EPO+KAMA。",
+             "因此 EPO 效果应在相同 KAMA 状态下比较，KAMA 效果应在相同配权方式下比较；避免把两项变化混为一谈。",
              (f"杠杆等权基准：启用={RUN_LEVERAGED_EW}，杠杆上限={MAX_LEVERAGE:g}；只买非 BIL 资产，借款利率为现金利率加融资利差。"
-              if RUN_LEVERAGED_EW else "杠杆等权基准未运行；MAX_LEVERAGE 不影响上述三条动量策略。"),
+              if RUN_LEVERAGED_EW else "杠杆等权基准未运行；MAX_LEVERAGE 不影响上述四条动量策略。"),
              "删去资产与窗口选择均已使用历史表现作开发判断，未来结果仍需固定规则向前评估。", "",
              "## 绩效", "", markdown_table(perf.reset_index()), "",
              "年化买卖交易量是买入金额与卖出金额分别相对交易前净值的总和，排除首次建仓；不是除以二的单边换手。", "",
              "## 年度收益", ""]
-    annual = yearly[[n for n in ["Momentum_kama", "Momentum_EQ", "Momentum_EPO_34D", "SPY", "EqualWeight"]
+    annual = yearly[[n for n in MOMENTUM_STRATEGY_ORDER + ["SPY", "EqualWeight"]
                      if n in yearly]].copy()
     for col in annual:
         annual[col] = annual[col].map(fmt_pct)
     annual.index.name = "年份"
     lines += [markdown_table(annual.reset_index()), "", "首尾年份可能不完整；各年收益按持有区间结束日期归属。", ""]
     if reports:
-        epo, equal = reports["Momentum_kama"], reports["Momentum_EQ"]
-        left, right = epo["tables"]["Full"], equal["tables"]["Full"]
-        full = pd.DataFrame({"KAMA与EPO净贡献": left.NetContribution,
-                             "等权净贡献": right.NetContribution})
-        full["差额"] = full["KAMA与EPO净贡献"] - full["等权净贡献"]
-        full = full.sort_values("KAMA与EPO净贡献", ascending=False)
+        epo_kama = reports["Momentum_kama"]
+        full = pd.DataFrame({
+            "EPO+KAMA": reports["Momentum_kama"]["tables"]["Full"].RelativeNetContribution,
+            "等权+KAMA": reports["Momentum_EQ_KAMA"]["tables"]["Full"].RelativeNetContribution,
+            "EPO+无KAMA": reports["Momentum_EPO_NoKAMA"]["tables"]["Full"].RelativeNetContribution,
+            "等权+无KAMA": reports["Momentum_EQ"]["tables"]["Full"].RelativeNetContribution,
+        })
+        full = full.sort_values("EPO+KAMA", ascending=False)
         full.loc["合计"] = full.sum()
         full = full.map(fmt_pp)
         full.index.name = "资产"
-        lines += ["## 全期净收益归因", "", markdown_table(full.reset_index()), "",
-                  "单位：累计收益百分点；贡献已经扣除该资产交易费用。两条策略同时改变 KAMA 筛选和配权，差额不能归因于 EPO 单一因素，也不是 CAGR 的分解。", ""]
+        lines += ["## 全期相对收益归因", "", markdown_table(full.reset_index()), "",
+                  "单位：相对贡献百分点。每个持有区间的相对毛贡献 = 实际持仓金额 ×（资产收益率 − 当日全资产简单等权收益率），相对净贡献再扣除该资产交易费。",
+                  "这让 BIL、GLD 等防御资产在全市场下跌时可以记录正的保护贡献；它们不再因为绝对收益低而天然吃亏。相对贡献是日频主动 PnL 的金额加总，不是两条独立净值曲线最终收益率之差。",
+                  "asset_contribution_full.csv 同时保留 Absolute* 列用于净值对账；AbsoluteNetContribution 的合计严格等于组合累计收益。", ""]
         summaries = {n: r["summary"].set_index("Period") for n, r in reports.items()}
         stage_rows = []
         for period in ATTRIBUTION_PERIODS:
             if period not in summaries["Momentum_kama"].index:
                 continue
-            a, b = summaries["Momentum_kama"].loc[period], summaries["Momentum_EQ"].loc[period]
+            a = summaries["Momentum_kama"].loc[period]
             stage_rows.append({"阶段": period,
                                "实际开始开盘": pd.Timestamp(a.start_open).date(),
                                "实际结束开盘": pd.Timestamp(a.end_open).date(),
-                               "KAMA与EPO收益": fmt_pct(a.period_return), "等权收益": fmt_pct(b.period_return),
-                               "差额(百分点)": fmt_pp(a.period_return - b.period_return)})
+                               "EPO+KAMA": fmt_pct(a.period_return),
+                               "等权+KAMA": fmt_pct(summaries["Momentum_EQ_KAMA"].loc[period].period_return),
+                               "EPO+无KAMA": fmt_pct(summaries["Momentum_EPO_NoKAMA"].loc[period].period_return),
+                               "等权+无KAMA": fmt_pct(summaries["Momentum_EQ"].loc[period].period_return),
+                               "全资产日等权基准": fmt_pct(a.equal_weight_benchmark_return)})
         lines += ["## 关键阶段", "", markdown_table(pd.DataFrame(stage_rows)), ""]
-        episodes = epo["episodes"]
+        episodes = epo_kama["episodes"]
         if not episodes.empty:
             worst = episodes.iloc[0]
-            losses = epo["tables"]["Worst_drawdown_peak_to_trough"].NetContribution.sort_values().head(4)
+            losses = epo_kama["tables"]["Worst_drawdown_peak_to_trough"].RelativeNetContribution.sort_values().head(4)
             lines += [f"Momentum_kama 最大回撤：{worst.drawdown:.2%}；峰值 {worst.peak_date.date()} → 谷底 {worst.trough_date.date()}。",
-                      "该段净贡献最低的四项：" + "；".join(f"{t} {100*v:+.2f} 个百分点" for t, v in losses.items()) + "。", ""]
+                      "该段相对净贡献最低的四项：" + "；".join(f"{t} {100*v:+.2f} 个百分点" for t, v in losses.items()) + "。", ""]
         lines += ["## 持仓与集中度", ""]
         risk_rows = []
-        for name, report in reports.items():
+        for name in MOMENTUM_STRATEGY_ORDER:
+            report = reports[name]
             exposure = report["exposure"]
             risk_rows.append({"策略": name, "最大单资产权重": fmt_pct(exposure.MaxAssetWeight.max()),
                               "平均实际持有数": f"{exposure.HeldAssetCount.mean():.2f}",
                               "平均QQQ/XLK/SMH权重": fmt_pct(exposure.Tech_related_ETFs.mean()),
                               "EPO退回等权次数": report["status_counts"].get("fallback_equal", 0)
-                              if name == "Momentum_kama" else "—"})
+                              if name in {"Momentum_kama", "Momentum_EPO_NoKAMA"} else "—"})
         lines += [markdown_table(pd.DataFrame(risk_rows)), "",
                   "科技敞口只是 QQQ、XLK、SMH 的 ETF 权重合计，未穿透成分股；入选三只不代表实际持有三只。", ""]
-        if "USO" in epo["holdings"].index:
-            holding = epo["holdings"].loc["USO"]
-            lines += ["## USO", "",
-                      f"Momentum_kama：全期净贡献 {100*left.loc['USO', 'NetContribution']:+.2f} 个百分点；平均权重 {holding.MeanWeight:.2%}；实际持有区间占比 {holding.HeldFraction:.2%}；最大权重 {holding.MaxWeight:.2%}。",
-                      f"动量等权：全期 USO 净贡献 {100*right.loc['USO', 'NetContribution']:+.2f} 个百分点。",
-                      "这是实际持仓贡献；量化加入 USO 的影响仍需固定其他设置，单独跑不含 USO 的对照。", ""]
+        if "USO" in epo_kama["holdings"].index:
+            uso_rows = []
+            for name in MOMENTUM_STRATEGY_ORDER:
+                holding = reports[name]["holdings"].loc["USO"]
+                attr = reports[name]["tables"]["Full"].loc["USO"]
+                uso_rows.append({"策略": name,
+                                 "相对净贡献(百分点)": fmt_pp(attr.RelativeNetContribution),
+                                 "绝对净贡献(百分点)": fmt_pp(attr.AbsoluteNetContribution),
+                                 "平均权重": fmt_pct(holding.MeanWeight),
+                                 "持有区间占比": fmt_pct(holding.HeldFraction)})
+            lines += ["## USO", "", markdown_table(pd.DataFrame(uso_rows)), "",
+                      "相对贡献衡量持有 USO 相比同期全资产等权收益的增减益；是否应从资产池删除，仍应另跑固定其他设置的不含 USO 对照。", ""]
     cost_display = costs[["NetCAGR", "AnnualTurnoverExInitial", "AnnualizedFeeRatio"]].copy()
     for col in ["ZeroCostCAGR", "CAGRDrag"]:
         if col in costs:
@@ -959,9 +1056,10 @@ def write_report(performance, yearly, reports, costs, results):
               "零费用结果是重新回测后的复利结果，仍计现金/融资利息；费用拖累不能用累计已付费用直接代替。", "",
               "## 文件与口径", "",
               "performance.csv：全部 ETF 和组合绩效；nav.csv：全部净值；yearly_returns.csv：年度收益；cost_summary.csv：费用影响。",
-              "asset_contribution_full.csv：全期归因；contribution_by_period.csv：全期、关键阶段和各策略自身最大回撤段；holding_summary.csv：持仓。三张表都用 Strategy 列区分策略；EPO_vs_EQ_contribution.csv 以历史文件名比较 Momentum_kama 与 Momentum_EQ，差异不只来自 EPO。",
-              "backtest.png：全部净值/回撤；momentum_comparison.png：重点策略净值/回撤；contribution_comparison.png：两条策略的全期贡献。",
-              "CSV 的收益、贡献、权重保存为小数，0.05=5%；PnL/FeesPaid 为初始净值=1 的金额单位。各期贡献分母不同，不能跨期直接相加。费用已扣入净贡献，不能重复扣除。",
+              "asset_contribution_full.csv：四策略全期归因；contribution_by_period.csv：全期、关键阶段和各策略自身最大回撤段；holding_summary.csv：持仓；attribution_period_summary.csv：各阶段组合收益与等权基准收益。",
+              "four_way_relative_contribution.csv：四策略相对贡献与 EPO/KAMA 的同条件差异；backtest.png：全部净值/回撤；momentum_comparison.png：四策略重点对照；contribution_comparison.png：四策略全期相对贡献。",
+              "CSV 的收益、贡献、权重保存为小数，0.05=5%；PnL/FeesPaid 为初始净值=1 的金额单位。Relative* 是相对当日全资产等权收益的主动贡献；Absolute* 是实际绝对贡献并用于净值对账。",
+              "各期贡献均除以该期初净值，不能跨期直接相加。RelativeNetContribution 已扣交易费；相对贡献合计是日频主动 PnL 的算术加总，不等于 geometric_return_difference，后者是策略期收益减去独立复利的日等权基准收益。",
               "仅保留四类核心检查：价格/日期有效；信号早于成交；仓位有限且符合满仓约定；净值、持仓盈亏和费用对账。详细账本只在 EXPORT_DETAILS=True 时保存到 details/。",
               f"本次 EXPORT_DETAILS={EXPORT_DETAILS}；scores.csv 保存各窗口原始分数、窗口排名、average_rank、positive_windows、eligible 和 selected；decisions.csv 保存实际窗口配置与目标权重。",
               "模型假设：复权开盘是总收益近似；现金/融资使用常数利率；只收显式交易成本，无其他市场冲击模型。本结果是历史回测，已看过或用于调参的区间不能视为全新样本外。", ""]
@@ -986,8 +1084,8 @@ def main():
     if DEFENSIVE_ETF not in TICKERS or len(set(TICKERS)) != len(TICKERS):
         raise ValueError("Universe must contain defensive ETF and no duplicates")
     print(f"Universe ({len(TICKERS)}): {TICKERS}")
-    print(f"Momentum_EQ: no KAMA; Momentum_kama: KAMA={USE_KAMA_FILTER} + EPO; "
-          "monthly, long-only, target gross=1.0")
+    print("Four-way comparison: equal/EPO allocation x no-KAMA/KAMA; "
+          f"USE_KAMA_FILTER={USE_KAMA_FILTER}; monthly, long-only, target gross=1.0")
     print(f"Momentum windows={windows}; require {required}/{len(windows)} positive windows")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     config = {k: globals()[k] for k in [
@@ -1010,8 +1108,13 @@ def main():
     ew = {t: 1 / len(TICKERS) for t in TICKERS}
     results["EqualWeight"] = backtest(close, adj_open, "EqualWeight",
                                       lambda date, history: ew)
-    for name, method in [("Momentum_EQ", "equal"), ("Momentum_kama", "epo")]:
-        use_kama = name == "Momentum_kama" and USE_KAMA_FILTER
+    strategy_specs = [
+        ("Momentum_EQ", "equal", False),
+        ("Momentum_EQ_KAMA", "equal", USE_KAMA_FILTER),
+        ("Momentum_EPO_NoKAMA", "epo", False),
+        ("Momentum_kama", "epo", USE_KAMA_FILTER),
+    ]
+    for name, method, use_kama in strategy_specs:
         signal = make_momentum_signal(
             method, use_kama=use_kama, kama_cache=kama_cache,
             momentum_cache=momentum_cache)
@@ -1032,14 +1135,6 @@ def main():
             zero_cost_results[name] = backtest(
                 close, adj_open, name + "_ZeroCost", zero_cost_signal,
                 rebalance="monthly", gross_cap=1.0, cost_bps=0.0)
-    # 固定 34 日动量与 EPO 的对照组，不经过 KAMA 筛选。
-    results["Momentum_EPO_34D"] = backtest(
-        close, adj_open, "Momentum_EPO_34D", make_momentum_signal("epo", [34], 1, use_kama=False, momentum_cache=momentum_cache),
-        rebalance="monthly", gross_cap=1.0)
-    if RUN_COST_COUNTERFACTUAL:
-        zero_cost_results["Momentum_EPO_34D"] = backtest(
-            close, adj_open, "Momentum_EPO_34D_ZeroCost", make_momentum_signal("epo", [34], 1, use_kama=False, momentum_cache=momentum_cache),
-            rebalance="monthly", gross_cap=1.0, cost_bps=0.0)
     if RUN_LEVERAGED_EW:
         levered = leveraged_equal_weight_target(TICKERS, MAX_LEVERAGE)
         print(f"LeveragedEqualWeight: {MAX_LEVERAGE:.2f}x across "
@@ -1049,8 +1144,9 @@ def main():
             gross_cap=MAX_LEVERAGE)
     performance = pd.DataFrame([summarize(n, x) for n, x in results.items()]).set_index("Strategy")
     performance.to_csv(OUT_DIR / "performance.csv")
-    names = [n for n in ["Momentum_kama", "Momentum_EQ", "Momentum_EPO_34D", "SPY", "QQQ",
-                         "EqualWeight", "LeveragedEqualWeight", "BIL"] if n in performance.index]
+    names = [n for n in MOMENTUM_STRATEGY_ORDER + [
+        "SPY", "QQQ", "EqualWeight", "LeveragedEqualWeight", "BIL"]
+        if n in performance.index]
     display = performance.loc[names].copy()
     for c in ["CAGR", "Volatility", "MaxDrawdown"]:
         display[c] = display[c].map(lambda v: f"{v:.2%}")
@@ -1068,7 +1164,7 @@ def main():
     yearly.to_csv(OUT_DIR / "yearly_returns.csv", index_label="Year")
     reports = {}
     if RUN_ATTRIBUTION:
-        for name in ["Momentum_EQ", "Momentum_kama"]:
+        for name in MOMENTUM_STRATEGY_ORDER:
             reports[name] = export_attribution(name, results[name], audits[name], signals[name])
         compare_attribution(reports)
     costs = export_cost_analysis(results, zero_cost_results)
@@ -1088,8 +1184,8 @@ def main():
         plt.show()
     plt.close(fig)
 
-    # 单独展示动量等权、KAMA+EPO 与固定 34 日 EPO 的净值和回撤。
-    comparison = [t for t in ["SPY", "QQQ", "EqualWeight", "Momentum_EQ", "Momentum_kama", "Momentum_EPO_34D", "BIL"]
+    # 单独展示四条动量策略，便于拆分 KAMA 与 EPO 的效果。
+    comparison = [t for t in MOMENTUM_STRATEGY_ORDER + ["SPY", "QQQ", "EqualWeight", "BIL"]
                   if t in nav.columns]
     fig, axes = plt.subplots(2, 1, figsize=(13, 10))
     nav[comparison].plot(ax=axes[0], logy=True, title="Momentum allocation comparison")
